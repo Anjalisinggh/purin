@@ -212,11 +212,17 @@
     renderer.setSize(w, h, false); camera.aspect = w / h;
     // keep the pudding clear of the card on wide screens, centred on narrow ones
     const narrow = w <= 720;
-    camera.setViewOffset(w, h, narrow ? 0 : Math.min(200, w * 0.15), narrow ? h * 0.13 : 0, w, h);
-    orbit.radius = Math.max(orbit.radius, narrow ? 7.4 : 5.4);
+    // on narrow screens, centre the pudding in the gap between the header and the bottom sheet
+    let dy = 0;
+    if (narrow) { const top = $('hint').getBoundingClientRect().bottom, bottom = $('card').getBoundingClientRect().top; dy = Math.max(0, h / 2 - (top + bottom) / 2 + h * 0.03); }
+    camera.setViewOffset(w, h, narrow ? 0 : Math.min(200, w * 0.15), dy, w, h);
+    // on portrait screens back off far enough that the whole pudding fits across the width
+    const fit = 1.35 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(1, w / h));
+    orbit.radius = THREE.MathUtils.clamp(Math.max(orbit.radius, narrow ? Math.max(7.4, fit) : 5.4), 3.6, 11);
     camera.updateProjectionMatrix();
   }
   addEventListener('resize', resize);
+  if (window.ResizeObserver) new ResizeObserver(() => resize()).observe($('card'));
 
   // ---------- picking ----------
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -350,6 +356,18 @@
     return kn.phase === 2 ? null : kn;
   }
 
+  // ---------- recover a pudding that left the screen ----------
+  const frustum = new THREE.Frustum(), projView = new THREE.Matrix4();
+  function allOffScreen() {
+    camera.updateMatrixWorld();
+    projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projView);
+    return pieceMeshes.every(m => {
+      const s = m.geometry.boundingSphere;
+      return !s || !isFinite(s.center.x + s.center.y + s.center.z) || !frustum.intersectsSphere(s);
+    });
+  }
+
   // ---------- loop ----------
   let acc = 0, lastT = performance.now(), frame = 0;
   const DT = 1 / 60, SUB = 8;
@@ -370,6 +388,7 @@
     }
     syncMeshes();
     placeCamera();
+    if (allOffScreen()) { startOver(!reduceMotion); toast('Pudding came back'); }
     renderer.render(scene, camera);
     if (++frame % 8 === 0) {
       const s = world.stats();
